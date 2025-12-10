@@ -142,6 +142,24 @@ router.post('/users/enroll', (req, res) => {
 });
 
 /**
+ * GET /api/v1/users
+ * Retrieves a list of all enrolled students.
+ * This is useful for the admin dashboard to display all registered users.
+ */
+router.get('/users', (req, res) => {
+    // Map over the users to exclude the sensitive fingerprintTemplate from the response
+    const safeUserList = users.map(user => ({
+        id: user.id,
+        name: user.name,
+        createdAt: user.createdAt
+    }));
+
+    console.log(`[USER] Admin requested list of all ${safeUserList.length} students.`);
+
+    return res.status(200).json(safeUserList);
+});
+
+/**
  * POST /api/v1/attendance/check_in_out
  * Records an attendance event by identifying the user from the incoming fingerprint scan.
  * @body {Array<number>} incomingTemplate - The fingerprint template captured by the attendance terminal.
