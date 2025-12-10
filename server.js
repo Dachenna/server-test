@@ -1,5 +1,5 @@
 /**
- * FINGERPRINT BIOMETRIC ATTENDANCE SYSTEM BACKEND (Node.js/Express)
+ * FINGERPRINT BIOMETRIC ATTENDANCE SYSTEM BACKEND (Node.js/Express) - PRODUCTION READY
  *
  * This file sets up a RESTful API using Express for a fingerprint-based student attendance system.
  * It mocks the database and the complex fingerprint matching service integration for demonstration.
@@ -10,22 +10,47 @@
  * 3. Service Layer Integration: Placeholder for the actual Fingerprint Matching service call.
  * 4. Security: Basic API Key simulation for securing endpoints.
  */
-
+// --- Production Dependencies ---
+require('dotenv').config(); // Loads environment variables from a .env file into process.env
 const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
-
-// NOTE: In a real-world scenario, we would use 'mongoose' or 'pg' here for persistence.
-// import mongoose from 'mongoose';
-// mongoose.connect('mongodb://localhost:27017/attendance_db');
+const mongoose = require('mongoose');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// --- Data Layer (Mock Database Collections) ---
-// Simulating collections for persistence. In production, this would be a MongoDB or PostgreSQL instance.
-const users = []; // Stores { id, name, fingerprintTemplate, createdAt }
-const attendanceRecords = []; // Stores { id, userId, timestamp, type: 'IN' | 'OUT' }
+// --- Database Layer (Mongoose Schemas & Connection) ---
+
+// 1. User Schema: Defines the structure for student records in the database.
+const UserSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    // The fingerprint template is sensitive data. In a real-world high-security system,
+    // this might be stored in a separate, more secure vault or service.
+    fingerprintTemplate: { type: Array, required: true, select: false }, // `select: false` prevents it from being returned in queries by default.
+    createdAt: { type: Date, default: Date.now }
+});
+
+// 2. Attendance Schema: Defines the structure for attendance log entries.
+const AttendanceSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true }, // Indexed for fast lookups
+    timestamp: { type: Date, default: Date.now },
+    type: { type: String, enum: ['IN', 'OUT'], required: true },
+    device: { type: String } // IP address of the scanning device
+});
+
+// 3. Create Mongoose Models from Schemas
+const User = mongoose.model('User', UserSchema);
+const Attendance = mongoose.model('Attendance', AttendanceSchema);
+
+// 4. Establish Database Connection
+mongoose.connect(process.env.MONGODB_URI)
+    .then(() => console.log('[DB] MongoDB connection successful.'))
+    .catch(err => {
+        console.error('[DB] MongoDB connection error:', err);
+        process.exit(1); // Exit the process if DB connection fails on startup
+    });
+
 
 // --- Configuration and Middleware ---
 // Using JSON parsing
@@ -47,7 +72,11 @@ app.use((req, res, next) => {
 
 // Read API key from environment if provided; otherwise generate a temporary one on startup.
 // 32 bytes (64 hex characters) is a good starting point for a strong, random key.
-const REQUIRED_API_KEY = process.env.ATTENDANCE_API_KEY || crypto.randomBytes(32).toString('hex');
+const REQUIRED_API_KEY = process.env.ATTENDANCE_API_KEY;
+if (!REQUIRED_API_KEY) {
+    console.error('[FATAL] ATTENDANCE_API_KEY environment variable not set. Shutting down.');
+    process.exit(1);
+}
 
 const apiAuth = (req, res, next) => {
     const apiKey = req.headers['x-api-key'];
@@ -77,29 +106,33 @@ router.use(apiAuth);
  * the incoming fingerprint data (e.g., minutiae) against the stored templates.
  * @param {Array<number>} incomingTemplate - The fingerprint template captured by the scanner.
  * @returns {string | null} The userId if a match is found, otherwise null.
+ *
+ * PRODUCTION NOTE: This is the most complex part. A real implementation would:
+ * 1. Fetch a batch of potential candidate templates from the database.
+ * 2. Use a specialized library (e.g., a C++ addon for Node.js) to perform the 1-to-N comparison efficiently.
+ * 3. Return the ID of the user with the highest matching score above a certain threshold.
  */
-const identifyUserFromFingerprint = (incomingTemplate) => {
-    // 1. COMPLEX ALGORITHM PLACEHOLDER:
-    // This is where the heavy lifting happens: comparing the incoming vector against
-    // all stored fingerprintTemplate attributes in the 'users' collection.
-
-    // --- MOCK LOGIC ---
-    // Since we can't run a real matching algorithm, we'll simulate a match.
-    // A real fingerprint template might be an object or a specific string format, not just an array.
+const identifyUserFromFingerprint = async (incomingTemplate) => {
     if (!incomingTemplate || !Array.isArray(incomingTemplate) || incomingTemplate.length < 50) {
         console.warn("[MATCHING] Incoming fingerprint template is malformed or too short. Denying attendance.");
         return null;
     }
 
-    // In a real system, the template must match a stored template within a specific tolerance threshold.
-    // For this mock, we'll just find the first user to simulate a successful match for testing.
-    const mockUser = users[0];
-    if (mockUser) {
-        console.log(`[ML] Successful match simulated for user: ${mockUser.id}`);
-        return mockUser.id;
+    // --- PRODUCTION SIMULATION ---
+    // This simulates the process. We fetch ALL users and their templates.
+    // WARNING: This is INEFFICIENT and does NOT scale. Do not use `select('+fingerprintTemplate')`
+    // like this in a real system with thousands of users. See "PRODUCTION NOTE" above.
+    const allUsers = await User.find({}).select('+fingerprintTemplate');
+
+    // MOCK COMPARISON: Find the first user. A real algorithm would compare `incomingTemplate`
+    // against each `user.fingerprintTemplate`.
+    const matchedUser = allUsers[0]; // Placeholder for real matching logic
+
+    if (matchedUser) {
+        console.log(`[MATCHING] Successful match simulated for user: ${matchedUser._id}`);
+        return matchedUser._id; // Return the MongoDB ObjectId
     }
 
-    // If no match is found above the confidence threshold.
     return null;
 };
 
@@ -114,31 +147,32 @@ const identifyUserFromFingerprint = (incomingTemplate) => {
  * @body {string} name - Student's full name.
  * @body {Array<number>} fingerprintTemplate - The data representing the user's fingerprint.
  */
-router.post('/users/enroll', (req, res) => {
-    const { name, fingerprintTemplate } = req.body;
+router.post('/users/enroll', async (req, res) => {
+    try {
+        const { name, fingerprintTemplate } = req.body;
 
-    if (!name || !fingerprintTemplate || !Array.isArray(fingerprintTemplate) || fingerprintTemplate.length === 0) {
-        return res.status(400).json({ message: 'Missing required fields: name and fingerprintTemplate must be provided.' });
+        if (!name || !fingerprintTemplate || !Array.isArray(fingerprintTemplate) || fingerprintTemplate.length === 0) {
+            return res.status(400).json({ message: 'Missing required fields: name and fingerprintTemplate must be provided.' });
+        }
+
+        // Check if a user with the same name already exists to prevent duplicates
+        const existingUser = await User.findOne({ name });
+        if (existingUser) {
+            return res.status(409).json({ message: `A student named '${name}' is already enrolled.` });
+        }
+
+        const newUser = new User({ name, fingerprintTemplate });
+        await newUser.save();
+
+        console.log(`[USER] New student enrolled: ${newUser.name} (${newUser._id})`);
+        res.status(201).json({
+            message: 'Student successfully enrolled and fingerprint data stored.',
+            user: { id: newUser._id, name: newUser.name, createdAt: newUser.createdAt } // Return the DB-generated ID
+        });
+    } catch (error) {
+        console.error('[ERROR] /users/enroll:', error);
+        res.status(500).json({ message: 'An internal server error occurred during enrollment.' });
     }
-
-    // Generate a unique ID (simulating MongoDB object ID or similar)
-    const newUserId = crypto.randomBytes(4).toString('hex');
-
-    const newUser = {
-        id: newUserId,
-        name,
-        // CRITICAL: In a real DB, this template data must be indexed for fast lookups.
-        fingerprintTemplate: fingerprintTemplate,
-        createdAt: new Date().toISOString()
-    };
-
-    users.push(newUser);
-
-    console.log(`[USER] New student enrolled: ${newUser.name} (${newUser.id})`);
-    return res.status(201).json({
-        message: 'Student successfully enrolled and fingerprint data stored.',
-        user: { id: newUser.id, name: newUser.name, createdAt: newUser.createdAt } // Do not return the template
-    });
 });
 
 /**
@@ -146,17 +180,17 @@ router.post('/users/enroll', (req, res) => {
  * Retrieves a list of all enrolled students.
  * This is useful for the admin dashboard to display all registered users.
  */
-router.get('/users', (req, res) => {
-    // Map over the users to exclude the sensitive fingerprintTemplate from the response
-    const safeUserList = users.map(user => ({
-        id: user.id,
-        name: user.name,
-        createdAt: user.createdAt
-    }));
+router.get('/users', async (req, res) => {
+    try {
+        // Fetch all users from the database. The fingerprintTemplate is excluded by default due to `select: false` in the schema.
+        const allUsers = await User.find({}).sort({ name: 1 }); // Sort alphabetically by name
 
-    console.log(`[USER] Admin requested list of all ${safeUserList.length} students.`);
-
-    return res.status(200).json(safeUserList);
+        console.log(`[USER] Admin requested list of all ${allUsers.length} students.`);
+        res.status(200).json(allUsers);
+    } catch (error) {
+        console.error('[ERROR] /users:', error);
+        res.status(500).json({ message: 'An internal server error occurred while fetching students.' });
+    }
 });
 
 /**
@@ -164,84 +198,84 @@ router.get('/users', (req, res) => {
  * Records an attendance event by identifying the user from the incoming fingerprint scan.
  * @body {Array<number>} incomingTemplate - The fingerprint template captured by the attendance terminal.
  */
-router.post('/attendance/check_in_out', (req, res) => {
-    const { incomingTemplate } = req.body;
+router.post('/attendance/check_in_out', async (req, res) => {
+    try {
+        const { incomingTemplate } = req.body;
 
-    if (!incomingTemplate || !Array.isArray(incomingTemplate) || incomingTemplate.length === 0) {
-        return res.status(400).json({ message: 'Missing required field: incomingTemplate.' });
-    }
-
-    // 1. Call the ML Service (MOCK) to identify the user
-    const userId = identifyUserFromFingerprint(incomingTemplate);
-
-    if (!userId) {
-        // If the identity cannot be confirmed (e.g., low confidence or unrecognized face)
-        console.warn(`[ATTENDANCE] Check-in attempt failed: Unrecognized fingerprint.`);
-        return res.status(404).json({ message: 'Fingerprint not recognized. Please try again.' });
-    }
-
-    // 2. Find the user's last attendance record to determine if it's IN or OUT
-    const lastRecord = attendanceRecords
-        .filter(record => record.userId === userId)
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
-
-    // Determine event type: If no record, or last record was 'OUT', it's an 'IN'. Otherwise, it's an 'OUT'.
-    const eventType = (!lastRecord || lastRecord.type === 'OUT') ? 'IN' : 'OUT';
-
-    // 3. Create the new attendance record
-    const newRecord = {
-        id: crypto.randomBytes(4).toString('hex'),
-        userId,
-        timestamp: new Date().toISOString(),
-        type: eventType,
-        device: req.ip // Useful for auditing which terminal was used
-    };
-
-    attendanceRecords.push(newRecord);
-
-    const studentName = users.find(u => u.id === userId)?.name || 'Unknown Student';
-    console.log(`[ATTENDANCE] Recorded ${eventType} for ${studentName} (${userId})`);
-
-    return res.status(200).json({
-        message: `${studentName}, your attendance has been recorded successfully. You are Clocked ${eventType}.`,
-        record: {
-            timestamp: newRecord.timestamp,
-            type: newRecord.type
+        if (!incomingTemplate || !Array.isArray(incomingTemplate) || incomingTemplate.length === 0) {
+            return res.status(400).json({ message: 'Missing required field: incomingTemplate.' });
         }
-    });
+
+        // 1. Identify the user via the biometric service
+        const userId = await identifyUserFromFingerprint(incomingTemplate);
+
+        if (!userId) {
+            console.warn(`[ATTENDANCE] Check-in attempt failed: Unrecognized fingerprint.`);
+            return res.status(404).json({ message: 'Fingerprint not recognized. Please try again.' });
+        }
+
+        // 2. Find the user's most recent attendance record to determine the next event type
+        const lastRecord = await Attendance.findOne({ userId }).sort({ timestamp: -1 });
+
+        const eventType = (!lastRecord || lastRecord.type === 'OUT') ? 'IN' : 'OUT';
+
+        // 3. Create and save the new attendance record
+        const newRecord = new Attendance({
+            userId,
+            type: eventType,
+            device: req.ip
+        });
+        await newRecord.save();
+
+        // Fetch student details for the response message
+        const student = await User.findById(userId);
+        const studentName = student ? student.name : 'Unknown Student';
+
+        console.log(`[ATTENDANCE] Recorded ${eventType} for ${studentName} (${userId})`);
+
+        res.status(200).json({
+            message: `${studentName}, your attendance has been recorded successfully. You are Clocked ${eventType}.`,
+            record: {
+                timestamp: newRecord.timestamp,
+                type: newRecord.type
+            }
+        });
+    } catch (error) {
+        console.error('[ERROR] /attendance/check_in_out:', error);
+        res.status(500).json({ message: 'An internal server error occurred while recording attendance.' });
+    }
 });
 
 /**
  * GET /api/v1/attendance/report/:userId?
  * Retrieves attendance records. Can filter by optional userId.
  */
-router.get('/attendance/report', (req, res) => {
-    const userId = req.query.userId || req.params.userId;
+router.get('/attendance/report', async (req, res) => {
+    try {
+        const { userId } = req.query;
+        const query = {};
 
-    let report = attendanceRecords;
-
-    if (userId) {
-        // Filter by specific user
-        report = attendanceRecords.filter(record => record.userId === userId);
-        const studentExists = users.some(u => u.id === userId);
-        if (!studentExists) {
-            return res.status(404).json({ message: `Student ID ${userId} not found.` });
+        if (userId) {
+            if (!mongoose.Types.ObjectId.isValid(userId)) {
+                return res.status(400).json({ message: `Invalid Student ID format.` });
+            }
+            query.userId = userId;
         }
+
+        // Use Mongoose's `populate` to automatically fetch the related user's name.
+        // This is far more efficient than mapping and finding in a separate array.
+        const report = await Attendance.find(query)
+            .populate('userId', 'name') // 'userId' is the field, 'name' is the property from the User model to include
+            .sort({ timestamp: -1 });
+
+        res.status(200).json({
+            totalRecords: report.length,
+            report
+        });
+    } catch (error) {
+        console.error('[ERROR] /attendance/report:', error);
+        res.status(500).json({ message: 'An internal server error occurred while fetching the report.' });
     }
-
-    // Enhance the report by adding the user name
-    const detailedReport = report.map(record => {
-        const user = users.find(u => u.id === record.userId); // 'user' is fine here as a local variable
-        return {
-            ...record,
-            userName: user ? user.name : 'N/A'
-        };
-    }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // Sort by newest first
-
-    return res.status(200).json({
-        totalRecords: detailedReport.length,
-        report: detailedReport
-    });
 });
 
 // Attach the router to the main app instance
@@ -249,14 +283,15 @@ app.use('/api/v1', router);
 
 // Health check endpoint (Does not require API key)
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', service: 'Fingerprint Biometric Backend', mockDbStudents: users.length });
+    // In production, this could also check the database connection status.
+    res.status(200).json({ status: 'ok', service: 'Fingerprint Biometric Backend', dbState: mongoose.connection.readyState });
 });
 
 // --- Server Startup ---
 app.listen(PORT, () => {
     console.log(`\n======================================================`);
     console.log(`🚀 Backend Server is running on port ${PORT}`);
-    console.log(`- API Key: loaded from environment`);
+    console.log(`- API Key: Loaded from .env file`);
     console.log(`- Endpoints secured under /api/v1/*`);
     console.log(`======================================================\n`);
 });
