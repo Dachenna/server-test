@@ -1,13 +1,13 @@
 /**
- * FACIAL BIOMETRIC ATTENDANCE SYSTEM BACKEND (Node.js/Express)
+ * FINGERPRINT BIOMETRIC ATTENDANCE SYSTEM BACKEND (Node.js/Express)
  *
- * This file sets up a RESTful API using Express for a facial biometric attendance system.
- * It mocks the database and the complex facial recognition service integration for demonstration.
+ * This file sets up a RESTful API using Express for a fingerprint-based student attendance system.
+ * It mocks the database and the complex fingerprint matching service integration for demonstration.
  *
  * Architecture Focus:
  * 1. API Layer: Express handles routing, middleware, and request/response.
  * 2. Data Layer: In-memory arrays simulate MongoDB collections (Users and Attendance).
- * 3. Service Layer Integration: Placeholder for the actual Facial Recognition ML Model call.
+ * 3. Service Layer Integration: Placeholder for the actual Fingerprint Matching service call.
  * 4. Security: Basic API Key simulation for securing endpoints.
  */
 
@@ -24,7 +24,7 @@ const PORT = 3000;
 
 // --- Data Layer (Mock Database Collections) ---
 // Simulating collections for persistence. In production, this would be a MongoDB or PostgreSQL instance.
-const users = []; // Stores { id, name, facialVector, createdAt }
+const users = []; // Stores { id, name, fingerprintTemplate, createdAt }
 const attendanceRecords = []; // Stores { id, userId, timestamp, type: 'IN' | 'OUT' }
 
 // --- Configuration and Middleware ---
@@ -68,32 +68,33 @@ router.use(apiAuth);
 
 
 // ---------------------------------------------------------------------
-// --- CORE FACIAL RECOGNITION SERVICE (Simulated ML Logic) ---
+// --- CORE FINGERPRINT MATCHING SERVICE (Simulated Logic) ---
 // ---------------------------------------------------------------------
 
 /**
- * Mocks the complex process of identifying a user based on a raw facial vector.
- * In production, this would be a call to a dedicated ML Service (e.g., AWS Rekognition, or a custom service
- * using TensorFlow.js/Python microservice) that handles vector comparison.
- * @param {Array<number>} incomingVector - The facial vector captured by the device.
+ * Mocks the complex process of identifying a user based on a fingerprint template.
+ * In production, this would be a call to a dedicated matching service that compares
+ * the incoming fingerprint data (e.g., minutiae) against the stored templates.
+ * @param {Array<number>} incomingTemplate - The fingerprint template captured by the scanner.
  * @returns {string | null} The userId if a match is found, otherwise null.
  */
-const identifyUserFromVector = (incomingVector) => {
+const identifyUserFromFingerprint = (incomingTemplate) => {
     // 1. COMPLEX ALGORITHM PLACEHOLDER:
     // This is where the heavy lifting happens: comparing the incoming vector against
-    // all stored facialVector attributes in the 'users' collection using a distance metric (e.g., Euclidean distance).
+    // all stored fingerprintTemplate attributes in the 'users' collection.
 
     // --- MOCK LOGIC ---
-    // Since we can't run the algorithm, we will assume a successful match based on the vector's size.
-    if (!incomingVector || incomingVector.length < 100) {
-        console.warn("[ML] Incoming vector is malformed or too short. Denying attendance.");
+    // Since we can't run a real matching algorithm, we'll simulate a match.
+    // A real fingerprint template might be an object or a specific string format, not just an array.
+    if (!incomingTemplate || !Array.isArray(incomingTemplate) || incomingTemplate.length < 50) {
+        console.warn("[MATCHING] Incoming fingerprint template is malformed or too short. Denying attendance.");
         return null;
     }
 
-    // In a real system, the vector must match a stored vector within a specific tolerance threshold.
-    // For this mock, we'll just check if the vector matches the first stored user (for deterministic testing).
+    // In a real system, the template must match a stored template within a specific tolerance threshold.
+    // For this mock, we'll just find the first user to simulate a successful match for testing.
     const mockUser = users[0];
-    if (mockUser && incomingVector.length > 100) {
+    if (mockUser) {
         console.log(`[ML] Successful match simulated for user: ${mockUser.id}`);
         return mockUser.id;
     }
@@ -109,15 +110,15 @@ const identifyUserFromVector = (incomingVector) => {
 
 /**
  * POST /api/v1/users/enroll
- * Registers a new employee and stores their initial facial vector.
- * @body {string} name - Employee's full name.
- * @body {Array<number>} facialVector - The high-dimensional facial embedding (e.g., 512 dimensions).
+ * Registers a new student and stores their initial fingerprint template.
+ * @body {string} name - Student's full name.
+ * @body {Array<number>} fingerprintTemplate - The data representing the user's fingerprint.
  */
 router.post('/users/enroll', (req, res) => {
-    const { name, facialVector } = req.body;
+    const { name, fingerprintTemplate } = req.body;
 
-    if (!name || !facialVector || !Array.isArray(facialVector) || facialVector.length === 0) {
-        return res.status(400).json({ message: 'Missing required fields: name and facialVector must be provided.' });
+    if (!name || !fingerprintTemplate || !Array.isArray(fingerprintTemplate) || fingerprintTemplate.length === 0) {
+        return res.status(400).json({ message: 'Missing required fields: name and fingerprintTemplate must be provided.' });
     }
 
     // Generate a unique ID (simulating MongoDB object ID or similar)
@@ -126,39 +127,39 @@ router.post('/users/enroll', (req, res) => {
     const newUser = {
         id: newUserId,
         name,
-        // CRITICAL: In a real DB, this vector must be indexed for fast lookups/comparisons.
-        facialVector: facialVector,
+        // CRITICAL: In a real DB, this template data must be indexed for fast lookups.
+        fingerprintTemplate: fingerprintTemplate,
         createdAt: new Date().toISOString()
     };
 
     users.push(newUser);
 
-    console.log(`[USER] New user enrolled: ${newUser.name} (${newUser.id})`);
+    console.log(`[USER] New student enrolled: ${newUser.name} (${newUser.id})`);
     return res.status(201).json({
-        message: 'User successfully enrolled and facial data stored.',
-        user: { id: newUser.id, name: newUser.name, createdAt: newUser.createdAt } // Do not return vector
+        message: 'Student successfully enrolled and fingerprint data stored.',
+        user: { id: newUser.id, name: newUser.name, createdAt: newUser.createdAt } // Do not return the template
     });
 });
 
 /**
  * POST /api/v1/attendance/check_in_out
- * Records an attendance event by identifying the user from the incoming face scan.
- * @body {Array<number>} incomingVector - The facial vector captured by the attendance terminal.
+ * Records an attendance event by identifying the user from the incoming fingerprint scan.
+ * @body {Array<number>} incomingTemplate - The fingerprint template captured by the attendance terminal.
  */
 router.post('/attendance/check_in_out', (req, res) => {
-    const { incomingVector } = req.body;
+    const { incomingTemplate } = req.body;
 
-    if (!incomingVector || !Array.isArray(incomingVector) || incomingVector.length === 0) {
-        return res.status(400).json({ message: 'Missing required field: incomingVector.' });
+    if (!incomingTemplate || !Array.isArray(incomingTemplate) || incomingTemplate.length === 0) {
+        return res.status(400).json({ message: 'Missing required field: incomingTemplate.' });
     }
 
     // 1. Call the ML Service (MOCK) to identify the user
-    const userId = identifyUserFromVector(incomingVector);
+    const userId = identifyUserFromFingerprint(incomingTemplate);
 
     if (!userId) {
         // If the identity cannot be confirmed (e.g., low confidence or unrecognized face)
-        console.warn(`[ATTENDANCE] Check-in attempt failed: Unrecognized face.`);
-        return res.status(404).json({ message: 'Facial identity not recognized. Please try again.' });
+        console.warn(`[ATTENDANCE] Check-in attempt failed: Unrecognized fingerprint.`);
+        return res.status(404).json({ message: 'Fingerprint not recognized. Please try again.' });
     }
 
     // 2. Find the user's last attendance record to determine if it's IN or OUT
@@ -180,11 +181,11 @@ router.post('/attendance/check_in_out', (req, res) => {
 
     attendanceRecords.push(newRecord);
 
-    const userName = users.find(u => u.id === userId)?.name || 'Unknown User';
-    console.log(`[ATTENDANCE] Recorded ${eventType} for ${userName} (${userId})`);
+    const studentName = users.find(u => u.id === userId)?.name || 'Unknown Student';
+    console.log(`[ATTENDANCE] Recorded ${eventType} for ${studentName} (${userId})`);
 
     return res.status(200).json({
-        message: `${userName}, your attendance has been recorded successfully. You are Clocked ${eventType}.`,
+        message: `${studentName}, your attendance has been recorded successfully. You are Clocked ${eventType}.`,
         record: {
             timestamp: newRecord.timestamp,
             type: newRecord.type
@@ -204,15 +205,15 @@ router.get('/attendance/report', (req, res) => {
     if (userId) {
         // Filter by specific user
         report = attendanceRecords.filter(record => record.userId === userId);
-        const userExists = users.some(u => u.id === userId);
-        if (!userExists) {
-            return res.status(404).json({ message: `User ID ${userId} not found.` });
+        const studentExists = users.some(u => u.id === userId);
+        if (!studentExists) {
+            return res.status(404).json({ message: `Student ID ${userId} not found.` });
         }
     }
 
     // Enhance the report by adding the user name
     const detailedReport = report.map(record => {
-        const user = users.find(u => u.id === record.userId);
+        const user = users.find(u => u.id === record.userId); // 'user' is fine here as a local variable
         return {
             ...record,
             userName: user ? user.name : 'N/A'
@@ -230,7 +231,7 @@ app.use('/api/v1', router);
 
 // Health check endpoint (Does not require API key)
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', service: 'Facial Biometric Backend', mockDbUsers: users.length });
+    res.status(200).json({ status: 'ok', service: 'Fingerprint Biometric Backend', mockDbStudents: users.length });
 });
 
 // --- Server Startup ---
